@@ -1,0 +1,2058 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OTP Migration Decoder</title>
+  <meta name="description" content="本地解密 Google Authenticator migration 文本、二维码图片和摄像头扫码结果，实时显示 OTP 与有效期。" />
+  <style>
+    :root {
+      color-scheme: light;
+      --bg-a: #fff7ed;
+      --bg-b: #fdf2f8;
+      --bg-c: #eef6ff;
+      --surface: rgba(255, 255, 255, 0.8);
+      --surface-strong: rgba(255, 255, 255, 0.94);
+      --surface-soft: rgba(255, 255, 255, 0.62);
+      --text: #172033;
+      --muted: #61708f;
+      --line: rgba(23, 32, 51, 0.09);
+      --accent: #2563eb;
+      --accent-2: #7c3aed;
+      --accent-3: #ec4899;
+      --accent-4: #f97316;
+      --success: #15803d;
+      --danger: #b42318;
+      --shadow-lg: 0 30px 90px rgba(83, 63, 123, 0.18);
+      --shadow-md: 0 18px 42px rgba(83, 63, 123, 0.12);
+      --radius-xl: 34px;
+      --radius-lg: 24px;
+      --radius-md: 18px;
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Helvetica Neue", Arial, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: var(--font-sans);
+      color: var(--text);
+      background:
+        radial-gradient(circle at 0% 0%, rgba(249, 115, 22, 0.16), transparent 26%),
+        radial-gradient(circle at 100% 12%, rgba(236, 72, 153, 0.13), transparent 24%),
+        radial-gradient(circle at 10% 100%, rgba(37, 99, 235, 0.16), transparent 26%),
+        linear-gradient(180deg, var(--bg-a), var(--bg-b) 42%, var(--bg-c));
+    }
+
+    button,
+    textarea,
+    select,
+    input {
+      font: inherit;
+    }
+
+    button {
+      border: 0;
+      cursor: pointer;
+    }
+
+    .page {
+      width: min(1420px, calc(100% - 24px));
+      margin: 0 auto;
+      padding: 14px 0 44px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 12px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .brand-badge {
+      width: 40px;
+      height: 40px;
+      display: grid;
+      place-items: center;
+      border-radius: 14px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-3));
+      color: #fff;
+      font-weight: 800;
+      box-shadow: 0 14px 28px rgba(37, 99, 235, 0.25);
+    }
+
+    .brand-copy strong {
+      display: block;
+      font-size: 14px;
+      font-weight: 800;
+      line-height: 1.2;
+    }
+
+    .brand-copy span {
+      display: block;
+      margin-top: 2px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .top-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .lang-switch {
+      display: inline-flex;
+      padding: 4px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.72);
+      border: 1px solid rgba(255, 255, 255, 0.72);
+      box-shadow: var(--shadow-md);
+    }
+
+    .lang-switch button,
+    .top-button {
+      min-height: 38px;
+      padding: 0 14px;
+      border-radius: 999px;
+      font-weight: 700;
+      transition: transform 0.18s ease, background 0.18s ease, color 0.18s ease;
+    }
+
+    .lang-switch button {
+      min-width: 84px;
+      background: transparent;
+      color: var(--muted);
+    }
+
+    .lang-switch button.active {
+      background: linear-gradient(135deg, var(--accent), #60a5fa);
+      color: #fff;
+    }
+
+    .top-button {
+      background: rgba(255, 255, 255, 0.72);
+      color: var(--text);
+      border: 1px solid rgba(255, 255, 255, 0.72);
+      box-shadow: var(--shadow-md);
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .panel {
+      position: relative;
+      overflow: hidden;
+      border-radius: var(--radius-xl);
+      border: 1px solid rgba(255, 255, 255, 0.76);
+      backdrop-filter: blur(18px);
+      box-shadow: var(--shadow-lg);
+    }
+
+    .input-panel {
+      position: sticky;
+      top: 14px;
+      padding: 12px 14px;
+      background:
+        radial-gradient(circle at top left, rgba(255, 255, 255, 0.24), transparent 28%),
+        linear-gradient(145deg, rgba(37, 99, 235, 0.98), rgba(124, 58, 237, 0.96) 48%, rgba(236, 72, 153, 0.94));
+      color: #fff;
+    }
+
+    .results-panel {
+      min-height: 480px;
+      padding: 12px 14px;
+      background:
+        radial-gradient(circle at top right, rgba(255, 255, 255, 0.48), transparent 24%),
+        linear-gradient(135deg, rgba(255, 255, 255, 0.76), rgba(255, 255, 255, 0.58));
+    }
+
+    .input-head {
+      margin-top: 0;
+      margin-bottom: 10px;
+    }
+
+    h1 {
+      max-width: none;
+      margin: 0;
+      font-size: 17px;
+      line-height: 1.15;
+      letter-spacing: -0.03em;
+      font-weight: 800;
+    }
+
+    .input-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      margin-top: 8px;
+    }
+
+    .main-input-card,
+    .support-card {
+      border-radius: 20px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      background: rgba(255, 255, 255, 0.12);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    }
+
+    .main-input-card {
+      padding: 10px;
+    }
+
+    .support-card {
+      padding: 10px;
+      display: grid;
+      gap: 8px;
+      align-content: start;
+    }
+
+    .label {
+      display: inline-block;
+      margin-bottom: 8px;
+      font-size: 12px;
+      font-weight: 800;
+      color: rgba(255, 255, 255, 0.92);
+      letter-spacing: 0.02em;
+    }
+
+    textarea,
+    select {
+      width: 100%;
+      border-radius: 20px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: rgba(255, 255, 255, 0.96);
+      color: var(--text);
+    }
+
+    textarea {
+      min-height: 88px;
+      resize: vertical;
+      padding: 10px 12px;
+      line-height: 1.5;
+    }
+
+    textarea:focus,
+    select:focus {
+      outline: none;
+      box-shadow: 0 0 0 5px rgba(255, 255, 255, 0.16);
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .actions .button:first-child {
+      grid-column: 1 / -1;
+    }
+
+    .button {
+      min-height: 44px;
+      padding: 0 14px;
+      border-radius: 16px;
+      font-weight: 800;
+      transition: transform 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
+    }
+
+    .button:hover,
+    .top-button:hover,
+    .lang-switch button:hover {
+      transform: translateY(-1px);
+    }
+
+    .button.primary {
+      background: linear-gradient(135deg, #fef3c7, #fdba74);
+      color: #7c2d12;
+      box-shadow: 0 14px 34px rgba(253, 186, 116, 0.26);
+    }
+
+    .button.secondary {
+      background: rgba(255, 255, 255, 0.14);
+      color: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+    }
+
+    .button.ghost {
+      background: rgba(23, 32, 51, 0.04);
+      color: var(--text);
+      border: 1px solid var(--line);
+    }
+
+    .support-card strong {
+      display: block;
+      margin-bottom: 2px;
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.95);
+    }
+
+    .support-card span {
+      display: block;
+      font-size: 11px;
+      line-height: 1.35;
+      color: rgba(255, 255, 255, 0.68);
+    }
+
+    .input-mode {
+      margin-top: 6px;
+    }
+
+    .upload-box,
+    .camera-box,
+    .paste-box {
+      padding: 12px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    .upload-box input {
+      width: 100%;
+      margin-top: 8px;
+      color: rgba(255, 255, 255, 0.88);
+    }
+
+    .camera-row {
+      display: grid;
+      grid-template-columns: 1fr 104px;
+      gap: 10px;
+      margin-top: 8px;
+      align-items: center;
+    }
+
+    #cameraView {
+      display: none;
+      width: 100%;
+      margin-top: 10px;
+      border-radius: 16px;
+      background: rgba(12, 18, 34, 0.5);
+      aspect-ratio: 4 / 3;
+      object-fit: cover;
+    }
+
+    .status {
+      margin-top: 10px;
+      padding: 12px 14px;
+      border-radius: 18px;
+      font-size: 13px;
+      line-height: 1.5;
+      border: 1px solid transparent;
+    }
+
+    .status.info {
+      color: rgba(255, 255, 255, 0.94);
+      background: rgba(255, 255, 255, 0.12);
+      border-color: rgba(255, 255, 255, 0.12);
+    }
+
+    .status.success {
+      color: #effff5;
+      background: rgba(34, 197, 94, 0.2);
+      border-color: rgba(34, 197, 94, 0.18);
+    }
+
+    .status.error {
+      color: #fff5f5;
+      background: rgba(239, 68, 68, 0.18);
+      border-color: rgba(239, 68, 68, 0.16);
+    }
+
+    .results-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 8px;
+    }
+
+    .results-head h2 {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+    }
+
+    .summary-badge {
+      flex: none;
+      min-height: 38px;
+      padding: 0 14px;
+      border-radius: 999px;
+      background: linear-gradient(135deg, rgba(37, 99, 235, 0.1), rgba(236, 72, 153, 0.1));
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 800;
+      display: inline-flex;
+      align-items: center;
+      white-space: nowrap;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .metric {
+      padding: 8px 12px;
+      border-radius: 12px;
+      background: var(--surface-strong);
+      border: 1px solid rgba(23, 32, 51, 0.06);
+      box-shadow: 0 10px 22px rgba(86, 66, 126, 0.06);
+    }
+
+    .metric strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .metric span {
+      display: block;
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: -0.05em;
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+      align-items: start;
+    }
+
+    /* Card: unified single panel */
+    .otp-card {
+      display: flex;
+      align-items: stretch;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.96);
+      border: 1px solid rgba(23, 32, 51, 0.08);
+      box-shadow: 0 4px 16px rgba(86, 66, 126, 0.07);
+    }
+
+    .card-left {
+      flex: 3;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 14px;
+    }
+
+    .card-identity {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .card-kv {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding-top: 10px;
+    }
+
+    .card-right {
+      flex: 2;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 12px;
+    }
+
+    .otp-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-bottom: 5px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 20px;
+      padding: 0 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .pill.type {
+      background: rgba(37, 99, 235, 0.1);
+      color: var(--accent);
+    }
+
+    .pill.code {
+      background: rgba(249, 115, 22, 0.12);
+      color: #b45309;
+    }
+
+    .card-name {
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1.25;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .card-account {
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.25;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .qr-main {
+      width: 100%;
+      aspect-ratio: 1;
+      border-radius: 10px;
+      background: #fff;
+      cursor: zoom-in;
+      border: 1px solid rgba(23, 32, 51, 0.06);
+      transition: opacity 0.15s ease;
+      padding: 8px;
+      box-sizing: border-box;
+      overflow: hidden;
+    }
+
+    .qr-main:hover {
+      opacity: 0.86;
+    }
+
+    .qr-main canvas,
+    .qr-main img {
+      width: 100% !important;
+      height: 100% !important;
+      display: block;
+      border-radius: 0;
+    }
+
+    .qr-lightbox {
+      position: fixed;
+      inset: 0;
+      display: none;
+      place-items: center;
+      padding: 20px;
+      background: rgba(15, 23, 42, 0.44);
+      backdrop-filter: blur(10px);
+      z-index: 30;
+      cursor: pointer;
+    }
+
+    .qr-lightbox.open {
+      display: grid;
+    }
+
+    .qr-lightbox-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      padding: 28px;
+      border-radius: 24px;
+      background: rgba(255, 255, 255, 0.97);
+      box-shadow: var(--shadow-lg);
+      cursor: default;
+    }
+
+    .qr-lightbox-canvas {
+      padding: 10px;
+      background: #fff;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid rgba(23, 32, 51, 0.06);
+    }
+
+    .qr-lightbox-canvas canvas,
+    .qr-lightbox-canvas img {
+      display: block;
+      border-radius: 0;
+    }
+
+    .qr-lightbox-label {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text);
+      text-align: center;
+      max-width: 26ch;
+      overflow-wrap: anywhere;
+    }
+
+    .qr-lightbox-sub {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: -8px;
+      text-align: center;
+      max-width: 30ch;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .otp-code {
+      font-size: 32px;
+      font-weight: 800;
+      letter-spacing: -0.07em;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .otp-timer {
+      position: relative;
+      width: 44px;
+      height: 44px;
+      flex: none;
+    }
+
+    .ring-svg {
+      width: 44px;
+      height: 44px;
+    }
+
+    .ring-track {
+      fill: none;
+      stroke: rgba(37, 99, 235, 0.1);
+      stroke-width: 4;
+    }
+
+    .ring-fill {
+      fill: none;
+      stroke: var(--accent);
+      stroke-width: 4;
+      stroke-linecap: round;
+      stroke-dasharray: 113.1;
+      stroke-dashoffset: 0;
+      transform-origin: 22px 22px;
+      transform: rotate(-90deg);
+      transition: stroke-dashoffset 0.6s linear, stroke 0.3s ease;
+    }
+
+    .ring-num {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 800;
+      color: var(--text);
+      pointer-events: none;
+    }
+
+    .ring-num-static {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .kv-grid {
+      display: contents;
+    }
+
+    .kv-item {
+      padding: 6px 9px;
+      border-radius: 10px;
+      background: rgba(248, 250, 252, 0.92);
+      border: 1px solid rgba(23, 32, 51, 0.06);
+      min-width: 0;
+    }
+
+    .kv-item strong {
+      display: block;
+      margin-bottom: 2px;
+      font-size: 10px;
+      font-weight: 800;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .truncate-copy {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .truncate-text {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      font-size: 12px;
+      line-height: 1.3;
+      color: var(--text);
+    }
+
+    .truncate-text.mono {
+      font-family: var(--font-mono);
+      color: var(--accent);
+    }
+
+    .copy-mini {
+      flex: none;
+      min-width: 40px;
+      min-height: 22px;
+      padding: 0 6px;
+      border-radius: 7px;
+      background: #fff;
+      border: 1px solid rgba(23, 32, 51, 0.08);
+      color: var(--text);
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    .card-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .card-actions .button {
+      min-height: 28px;
+      padding: 0 10px;
+      border-radius: 9px;
+      font-size: 11px;
+    }
+
+    .empty {
+      padding: 34px 20px;
+      text-align: center;
+      border-radius: 24px;
+      background: var(--surface);
+      border: 1px solid rgba(255, 255, 255, 0.76);
+      box-shadow: var(--shadow-md);
+    }
+
+    .empty h2 {
+      margin: 0 0 8px;
+      font-size: 17px;
+      letter-spacing: -0.03em;
+    }
+
+    .empty p {
+      max-width: 44ch;
+      margin: 0 auto;
+      color: var(--muted);
+      line-height: 1.5;
+      font-size: 12px;
+    }
+
+    .modal {
+      position: fixed;
+      inset: 0;
+      display: none;
+      place-items: center;
+      padding: 18px;
+      background: rgba(15, 23, 42, 0.36);
+      backdrop-filter: blur(8px);
+      z-index: 20;
+    }
+
+    .modal.open {
+      display: grid;
+    }
+
+    .modal-card {
+      width: min(760px, 100%);
+      max-height: min(86vh, 920px);
+      overflow: auto;
+      padding: 24px;
+      border-radius: 28px;
+      background: rgba(255, 255, 255, 0.96);
+      box-shadow: var(--shadow-lg);
+    }
+
+    .modal-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+
+    .modal-head h2 {
+      margin: 0;
+      font-size: 28px;
+      letter-spacing: -0.05em;
+    }
+
+    .modal-head p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      line-height: 1.65;
+    }
+
+    .modal-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .modal-item {
+      padding: 16px;
+      border-radius: 18px;
+      background: rgba(248, 250, 252, 0.94);
+      border: 1px solid rgba(23, 32, 51, 0.06);
+    }
+
+    .modal-item strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 14px;
+    }
+
+    .modal-item span {
+      display: block;
+      color: var(--muted);
+      line-height: 1.65;
+      font-size: 14px;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    /* 右侧面板足够宽时，卡片显示两列（视口 >= 960px 时右侧约有 620px+） */
+    @media (min-width: 960px) {
+      .cards {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    /* 移动端：改回单列堆叠 */
+    @media (max-width: 768px) {
+      .page {
+        width: min(100% - 16px, 1420px);
+        padding-top: 14px;
+      }
+
+      .workspace {
+        grid-template-columns: 1fr;
+      }
+
+      .input-panel {
+        position: static;
+      }
+
+      .cards {
+        grid-template-columns: 1fr;
+      }
+
+      .topbar,
+      .results-head,
+      .modal-head {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .top-actions {
+        justify-content: stretch;
+      }
+
+      .lang-switch,
+      .top-button {
+        width: 100%;
+      }
+
+      .lang-switch button {
+        flex: 1;
+      }
+
+      .panel,
+      .modal-card {
+        padding: 14px;
+      }
+
+      .actions,
+      .camera-row {
+        grid-template-columns: 1fr;
+      }
+
+      .otp-card {
+        flex-direction: column;
+      }
+
+    }
+  </style>
+</head>
+
+<body>
+  <div class="page">
+    <div class="topbar">
+      <div class="brand">
+        <div class="brand-badge">OTP</div>
+        <div class="brand-copy">
+          <strong id="brandTitle">Google Authenticator 解密工具</strong>
+          <span id="brandSubtitle">本地解密 • 静态部署</span>
+        </div>
+      </div>
+
+      <div class="top-actions">
+        <div class="lang-switch" role="tablist" aria-label="Language switch">
+          <button id="langZh" class="active" type="button">中文</button>
+          <button id="langEn" type="button">English</button>
+        </div>
+        <button id="aboutButton" class="top-button" type="button">About</button>
+      </div>
+    </div>
+
+    <section class="workspace">
+      <div class="panel input-panel">
+        <div class="input-head">
+          <h1 id="heroTitle">解密并计算 OTP</h1>
+        </div>
+
+        <div class="input-grid">
+          <div class="main-input-card">
+            <label class="label" for="migrationInput" id="inputLabel">迁移链接 / otpauth 文本</label>
+            <textarea id="migrationInput" spellcheck="false" placeholder="粘贴 Google Authenticator 导出的 migration 文本，按 Cmd/Ctrl + Enter 立即解析"></textarea>
+
+            <div class="actions">
+              <button id="decodeButton" class="button primary" type="button">立即解析</button>
+              <button id="pasteButton" class="button secondary" type="button">读取剪贴板</button>
+              <button id="clearButton" class="button secondary" type="button">清空结果</button>
+            </div>
+          </div>
+
+          <div class="support-card">
+            <strong id="modeTitle">识别模式</strong>
+            <select id="inputMode" class="input-mode" aria-label="Input mode">
+              <option value="auto">Auto Detect</option>
+              <option value="migration">Migration</option>
+              <option value="otpauth">otpauth</option>
+            </select>
+
+            <div class="upload-box">
+              <strong id="uploadTitle">二维码图片</strong>
+              <input id="fileInput" type="file" accept="image/*" />
+            </div>
+
+            <div class="camera-box">
+              <strong id="cameraTitle">摄像头扫码</strong>
+              <div class="camera-row">
+                <select id="cameraSelect" aria-label="Camera select">
+                  <option value="environment">environment</option>
+                  <option value="user">user</option>
+                </select>
+                <button id="cameraButton" class="button secondary" type="button">开启</button>
+              </div>
+              <video id="cameraView" muted playsinline></video>
+            </div>
+          </div>
+        </div>
+
+        <div id="status" class="status info">等待输入</div>
+      </div>
+
+      <div class="panel results-panel">
+        <div id="summaryWrap">
+          <div class="results-head">
+            <h2 id="resultsTitle">OTP 卡片</h2>
+            <div id="summaryBadge" class="summary-badge hidden"></div>
+          </div>
+
+          <div id="metrics" class="metrics hidden"></div>
+        </div>
+
+        <div id="emptyState" class="empty">
+          <h2 id="emptyTitle">结果会出现在这里</h2>
+          <p id="emptyDesc">粘贴 migration 文本或扫描二维码后，卡片将显示在这里。</p>
+        </div>
+
+        <div id="cards" class="cards hidden"></div>
+      </div>
+    </section>
+  </div>
+
+  <div id="aboutModal" class="modal" aria-hidden="true">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div>
+          <h2 id="aboutTitle">关于这个工具</h2>
+          <p id="aboutLead">页面主区域优先保留给解密功能，这里的说明只在需要时再展开查看。</p>
+        </div>
+        <button id="aboutClose" class="top-button" type="button">Close</button>
+      </div>
+
+      <div class="modal-grid">
+        <div class="modal-item">
+          <strong id="aboutItem1Title">本地处理</strong>
+          <span id="aboutItem1Desc">解析 migration、识别二维码、计算 OTP 都在当前浏览器完成，不向后端发送 Secret。</span>
+        </div>
+        <div class="modal-item">
+          <strong id="aboutItem2Title">输入方式</strong>
+          <span id="aboutItem2Desc">支持文本、二维码图片、摄像头扫码，以及可用时的截图粘贴解析。</span>
+        </div>
+        <div class="modal-item">
+          <strong id="aboutItem3Title">结果展示</strong>
+          <span id="aboutItem3Desc">每个账号都以独立卡片显示，包含实时 OTP、剩余有效期、Secret 与 otpauth URI。</span>
+        </div>
+        <div class="modal-item">
+          <strong id="aboutItem4Title">部署方式</strong>
+          <span id="aboutItem4Desc">纯静态页面，可直接提交到 GitHub，再部署到 Cloudflare Pages。</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="qrLightbox" class="qr-lightbox" aria-hidden="true">
+    <div class="qr-lightbox-card">
+      <div class="qr-lightbox-canvas" id="qrLightboxCanvas"></div>
+      <div class="qr-lightbox-label" id="qrLightboxLabel"></div>
+      <div class="qr-lightbox-sub" id="qrLightboxSub"></div>
+    </div>
+  </div>
+
+  <script src="./assets/vendor/protobuf.min.js"></script>
+  <script src="./assets/vendor/qr-scanner.umd.min.js"></script>
+  <script src="./assets/vendor/qr-creator.min.js"></script>
+  <script>
+    QrScanner.WORKER_PATH = "./assets/vendor/qr-scanner-worker.min.js";
+
+    const I18N = {
+      zh: {
+        brandTitle: "Google Authenticator 解密工具",
+        brandSubtitle: "本地解密 • 静态部署",
+        heroTitle: "解密并计算 OTP",
+        heroDesc: "支持文本、图片、扫码和截图粘贴，本地解析。",
+        heroBadge: "本地处理",
+        inputLabel: "迁移链接 / otpauth 文本",
+        inputPlaceholder: "粘贴 Google Authenticator 导出的 migration 文本，按 Cmd/Ctrl + Enter 立即解析",
+        decodeButton: "立即解析",
+        pasteButton: "读取剪贴板",
+        clearButton: "清空结果",
+        modeTitle: "识别模式",
+        modeDesc: "自动识别 migration 和 otpauth。",
+        uploadTitle: "二维码图片",
+        uploadDesc: "选择本地二维码截图解析。",
+        cameraTitle: "摄像头扫码",
+        cameraDesc: "允许权限后自动扫码。",
+        cameraButtonStart: "开启",
+        cameraButtonStop: "停止",
+        imagePasteTitle: "截图粘贴",
+        imagePasteDesc: "聚焦页面后直接粘贴截图图片。",
+        statusIdle: "等待输入",
+        resultsTitle: "OTP 卡片",
+        emptyTitle: "结果会出现在这里",
+        emptyDesc: "粘贴 migration 文本或扫描二维码后，卡片将显示在这里。",
+        aboutButton: "关于",
+        aboutTitle: "关于这个工具",
+        aboutLead: "页面主区域优先保留给解密功能，这里的说明只在需要时再展开查看。",
+        aboutClose: "关闭",
+        aboutItem1Title: "本地处理",
+        aboutItem1Desc: "解析 migration、识别二维码、计算 OTP 都在当前浏览器完成，不向后端发送 Secret。",
+        aboutItem2Title: "输入方式",
+        aboutItem2Desc: "支持文本、二维码图片、摄像头扫码，以及可用时的截图粘贴解析。",
+        aboutItem3Title: "结果展示",
+        aboutItem3Desc: "每个账号都以独立卡片显示，包含实时 OTP、剩余有效期、Secret 与 otpauth URI。",
+        aboutItem4Title: "部署方式",
+        aboutItem4Desc: "纯静态页面，可直接提交到 GitHub，再部署到 Cloudflare Pages。",
+        summaryDone: "解析完成",
+        metricAccounts: "账号数量",
+        metricTotp: "TOTP",
+        metricHotp: "HOTP",
+        metricIssuers: "签发方",
+        badgeNormal: "普通 otpauth",
+        badgeMigration: (id) => `Migration 批次 #${id || 0}`,
+        parseMigration: "迁移数据",
+        parseOtpauth: "otpauth 数据",
+        parsedSuccess: (type, count) => `已解析 ${type}，共 ${count} 个账号。`,
+        clearDone: "已清空。等待新的输入内容。",
+        clipboardLoaded: "已从剪贴板读取文本，点击“立即解析”即可。",
+        clipboardImageLoaded: "已读取剪贴板图片，正在尝试识别二维码。",
+        clipboardFail: "无法读取剪贴板，请检查浏览器权限。",
+        imagePasteUnsupported: "当前浏览器未提供可识别的剪贴板图片内容。",
+        parseEmpty: "请先输入 migration 文本或 otpauth 链接。",
+        parseUnsupported: "暂不支持当前内容。请输入 otpauth-migration、data payload 或 otpauth 链接。",
+        parseNoData: "未找到可用的 migration 数据。",
+        parseNoSecret: "otpauth 链接缺少 secret 参数。",
+        invalidBase32: "Secret 不是合法的 Base32 编码。",
+        invalidOtpauth: "当前输入不是 otpauth 链接。",
+        invalidType: "otpauth 类型只支持 TOTP 或 HOTP。",
+        imageDecodeFail: "图片识别失败，请确认二维码清晰可见。",
+        cameraReady: "摄像头已开启，对准二维码即可自动读取。",
+        cameraFail: "无法访问摄像头，请检查浏览器权限。",
+        cameraSwitched: "已切换摄像头。",
+        unnamedIssuer: "未命名签发方",
+        unnamedAccount: "未命名账号",
+        notProvided: "未提供",
+        realtimeOtp: "实时 OTP",
+        hotpCounter: (counter) => `HOTP 计数器 #${counter}`,
+        refreshIn: (s) => `${s}s 后刷新`,
+        expiresIn: (s) => `剩余 ${s}s`,
+        validity: "有效期",
+        copy: "复制",
+        copySecret: "复制 Secret",
+        copyUri: "复制 otpauth",
+        nextHotp: "生成下一个 HOTP",
+        copiedSecret: (name) => `已复制 ${name} 的 Secret。`,
+        copiedUri: (name) => `已复制 ${name} 的 otpauth 链接。`,
+        copiedValue: "已复制完整内容。",
+        hotpGenerated: (name) => `已生成 ${name} 的 HOTP。`,
+        unsupportedPreview: "不支持预览",
+        importQr: "导入二维码",
+        typeIssuer: "Issuer",
+        typeAccount: "Account",
+        typeSecret: "Secret",
+        typeUri: "otpauth URI",
+        modeAuto: "自动识别",
+        modeMigration: "仅 migration",
+        modeOtpauth: "仅 otpauth"
+      },
+      en: {
+        brandTitle: "Google Authenticator Decoder",
+        brandSubtitle: "Local-only • Static Deploy",
+        heroTitle: "Decode and Calculate OTP",
+        heroDesc: "Supports text, images, camera scan, and image paste. Everything stays local.",
+        heroBadge: "Local Only",
+        inputLabel: "Migration / otpauth text",
+        inputPlaceholder: "Paste Google Authenticator migration text here, then press Cmd/Ctrl + Enter to decode",
+        decodeButton: "Decode",
+        pasteButton: "Paste Text",
+        clearButton: "Clear",
+        modeTitle: "Detection Mode",
+        modeDesc: "Automatically detects migration and otpauth input.",
+        uploadTitle: "QR Image",
+        uploadDesc: "Choose a local QR screenshot to decode.",
+        cameraTitle: "Camera Scan",
+        cameraDesc: "Grant permission to scan directly.",
+        cameraButtonStart: "Start",
+        cameraButtonStop: "Stop",
+        imagePasteTitle: "Image Paste",
+        imagePasteDesc: "Focus the page and paste a screenshot image.",
+        statusIdle: "Waiting for input",
+        resultsTitle: "OTP Cards",
+        emptyTitle: "Results will appear here",
+        emptyDesc: "Paste migration text or scan a QR code — cards will appear here.",
+        aboutButton: "About",
+        aboutTitle: "About This Tool",
+        aboutLead: "The main page area is intentionally reserved for the decoder. Documentation lives here only when you need it.",
+        aboutClose: "Close",
+        aboutItem1Title: "Local Processing",
+        aboutItem1Desc: "Migration parsing, QR recognition, and OTP calculation all happen in the browser without sending secrets to a server.",
+        aboutItem2Title: "Input Methods",
+        aboutItem2Desc: "Supports text, QR images, camera scanning, and image paste when available.",
+        aboutItem3Title: "Result Cards",
+        aboutItem3Desc: "Every account is shown as a separate card with live OTP, remaining validity, Secret, and otpauth URI.",
+        aboutItem4Title: "Deployment",
+        aboutItem4Desc: "Pure static assets, suitable for GitHub and Cloudflare Pages deployment.",
+        summaryDone: "Decoded",
+        metricAccounts: "Accounts",
+        metricTotp: "TOTP",
+        metricHotp: "HOTP",
+        metricIssuers: "Issuers",
+        badgeNormal: "Regular otpauth",
+        badgeMigration: (id) => `Migration Batch #${id || 0}`,
+        parseMigration: "migration data",
+        parseOtpauth: "otpauth data",
+        parsedSuccess: (type, count) => `Parsed ${type}. ${count} account(s) found.`,
+        clearDone: "Cleared. Waiting for new input.",
+        clipboardLoaded: "Clipboard text loaded. Click Decode to continue.",
+        clipboardImageLoaded: "Clipboard image loaded. Trying to decode the QR code now.",
+        clipboardFail: "Clipboard access failed. Check browser permissions.",
+        imagePasteUnsupported: "This browser did not provide a readable clipboard image.",
+        parseEmpty: "Please enter migration text or an otpauth URL first.",
+        parseUnsupported: "Unsupported content. Please enter an otpauth-migration string, raw data payload, or an otpauth URL.",
+        parseNoData: "No usable migration payload was found.",
+        parseNoSecret: "The otpauth URL is missing the secret parameter.",
+        invalidBase32: "The secret is not valid Base32.",
+        invalidOtpauth: "The current input is not an otpauth URL.",
+        invalidType: "The otpauth type must be TOTP or HOTP.",
+        imageDecodeFail: "Image decoding failed. Make sure the QR code is visible and clear.",
+        cameraReady: "Camera is active. Point it at the QR code to decode automatically.",
+        cameraFail: "Unable to access the camera. Check browser permissions.",
+        cameraSwitched: "Camera switched.",
+        unnamedIssuer: "Unnamed issuer",
+        unnamedAccount: "Unnamed account",
+        notProvided: "Not provided",
+        realtimeOtp: "Live OTP",
+        hotpCounter: (counter) => `HOTP Counter #${counter}`,
+        refreshIn: (s) => `Refresh in ${s}s`,
+        expiresIn: (s) => `${s}s left`,
+        validity: "Validity",
+        copy: "Copy",
+        copySecret: "Copy Secret",
+        copyUri: "Copy otpauth",
+        nextHotp: "Next HOTP",
+        copiedSecret: (name) => `Copied Secret for ${name}.`,
+        copiedUri: (name) => `Copied otpauth URI for ${name}.`,
+        copiedValue: "Copied full value.",
+        hotpGenerated: (name) => `Generated HOTP for ${name}.`,
+        unsupportedPreview: "Preview unavailable",
+        importQr: "Import QR",
+        typeIssuer: "Issuer",
+        typeAccount: "Account",
+        typeSecret: "Secret",
+        typeUri: "otpauth URI",
+        modeAuto: "Auto Detect",
+        modeMigration: "Migration Only",
+        modeOtpauth: "otpauth Only"
+      }
+    };
+
+    const state = {
+      lang: "zh",
+      accounts: [],
+      payloadMeta: null,
+      refreshTimer: null,
+      qrScanner: null,
+      scanActive: false,
+    };
+
+    const dom = {
+      brandTitle: document.getElementById("brandTitle"),
+      brandSubtitle: document.getElementById("brandSubtitle"),
+      heroTitle: document.getElementById("heroTitle"),
+      inputLabel: document.getElementById("inputLabel"),
+      input: document.getElementById("migrationInput"),
+      decodeButton: document.getElementById("decodeButton"),
+      pasteButton: document.getElementById("pasteButton"),
+      clearButton: document.getElementById("clearButton"),
+      modeTitle: document.getElementById("modeTitle"),
+      inputMode: document.getElementById("inputMode"),
+      uploadTitle: document.getElementById("uploadTitle"),
+      fileInput: document.getElementById("fileInput"),
+      cameraTitle: document.getElementById("cameraTitle"),
+      cameraSelect: document.getElementById("cameraSelect"),
+      cameraButton: document.getElementById("cameraButton"),
+      cameraView: document.getElementById("cameraView"),
+      status: document.getElementById("status"),
+      resultsTitle: document.getElementById("resultsTitle"),
+      summaryBadge: document.getElementById("summaryBadge"),
+      metrics: document.getElementById("metrics"),
+      emptyState: document.getElementById("emptyState"),
+      emptyTitle: document.getElementById("emptyTitle"),
+      emptyDesc: document.getElementById("emptyDesc"),
+      cards: document.getElementById("cards"),
+      langZh: document.getElementById("langZh"),
+      langEn: document.getElementById("langEn"),
+      aboutButton: document.getElementById("aboutButton"),
+      aboutModal: document.getElementById("aboutModal"),
+      aboutClose: document.getElementById("aboutClose"),
+      aboutTitle: document.getElementById("aboutTitle"),
+      aboutLead: document.getElementById("aboutLead"),
+      aboutItem1Title: document.getElementById("aboutItem1Title"),
+      aboutItem1Desc: document.getElementById("aboutItem1Desc"),
+      aboutItem2Title: document.getElementById("aboutItem2Title"),
+      aboutItem2Desc: document.getElementById("aboutItem2Desc"),
+      aboutItem3Title: document.getElementById("aboutItem3Title"),
+      aboutItem3Desc: document.getElementById("aboutItem3Desc"),
+      aboutItem4Title: document.getElementById("aboutItem4Title"),
+      aboutItem4Desc: document.getElementById("aboutItem4Desc"),
+      qrLightbox: document.getElementById("qrLightbox"),
+      qrLightboxCanvas: document.getElementById("qrLightboxCanvas"),
+      qrLightboxLabel: document.getElementById("qrLightboxLabel"),
+      qrLightboxSub: document.getElementById("qrLightboxSub"),
+    };
+
+    const PROTOBUF_SCHEMA = `
+      syntax = "proto3";
+
+      message MigrationPayload {
+        enum Algorithm {
+          ALGO_INVALID = 0;
+          ALGO_SHA1 = 1;
+        }
+
+        enum OtpType {
+          OTP_INVALID = 0;
+          OTP_HOTP = 1;
+          OTP_TOTP = 2;
+        }
+
+        message OtpParameters {
+          bytes secret = 1;
+          string name = 2;
+          string issuer = 3;
+          Algorithm algorithm = 4;
+          int32 digits = 5;
+          OtpType type = 6;
+          int64 counter = 7;
+        }
+
+        repeated OtpParameters otp_parameters = 1;
+        int32 version = 2;
+        int32 batch_size = 3;
+        int32 batch_index = 4;
+        int32 batch_id = 5;
+      }
+    `;
+
+    const parsedRoot = protobuf.parse(PROTOBUF_SCHEMA).root;
+    const MigrationPayload = parsedRoot.lookupType("MigrationPayload");
+
+    function t(key, ...args) {
+      const value = I18N[state.lang][key];
+      return typeof value === "function" ? value(...args) : value;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function setStatus(message, type = "info") {
+      dom.status.className = `status ${type}`;
+      dom.status.textContent = message;
+    }
+
+    function normalizeBase64(value) {
+      const cleaned = value.replace(/\s+/g, "").replace(/-/g, "+").replace(/_/g, "/");
+      const padLength = (4 - (cleaned.length % 4)) % 4;
+      return cleaned + "=".repeat(padLength);
+    }
+
+    function base64ToBytes(value) {
+      const binary = atob(normalizeBase64(value));
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i += 1) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      return bytes;
+    }
+
+    function base32Encode(bytes) {
+      const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+      let bits = 0;
+      let value = 0;
+      let output = "";
+      for (const byte of bytes) {
+        value = (value << 8) | byte;
+        bits += 8;
+        while (bits >= 5) {
+          output += alphabet[(value >>> (bits - 5)) & 31];
+          bits -= 5;
+        }
+      }
+      if (bits > 0) {
+        output += alphabet[(value << (5 - bits)) & 31];
+      }
+      return output;
+    }
+
+    function base32Decode(input) {
+      const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+      const clean = input.toUpperCase().replace(/=+$/g, "").replace(/\s+/g, "");
+      let bits = 0;
+      let value = 0;
+      const output = [];
+      for (const char of clean) {
+        const index = alphabet.indexOf(char);
+        if (index === -1) {
+          throw new Error(t("invalidBase32"));
+        }
+        value = (value << 5) | index;
+        bits += 5;
+        if (bits >= 8) {
+          output.push((value >>> (bits - 8)) & 255);
+          bits -= 8;
+        }
+      }
+      return new Uint8Array(output);
+    }
+
+    function resolveMigrationPayloadInput(rawInput) {
+      const trimmed = rawInput.trim();
+      const marker = "otpauth-migration://offline?data=";
+      if (trimmed.startsWith(marker)) {
+        return decodeURIComponent(trimmed.slice(marker.length).split("&")[0].trim());
+      }
+      if (trimmed.startsWith("data=")) {
+        return decodeURIComponent(trimmed.slice(5).split("&")[0].trim());
+      }
+      if (/^[A-Za-z0-9+/_=-]+$/.test(trimmed) && !trimmed.includes("otpauth://")) {
+        return decodeURIComponent(trimmed);
+      }
+      throw new Error(t("parseNoData"));
+    }
+
+    function buildOtpauthUri(account) {
+      const otpType = account.type.toLowerCase();
+      const label = account.issuer
+        ? `${encodeURIComponent(account.issuer)}:${encodeURIComponent(account.name || "account")}`
+        : encodeURIComponent(account.name || "account");
+
+      const params = new URLSearchParams();
+      params.set("secret", account.secretBase32);
+      if (account.issuer) {
+        params.set("issuer", account.issuer);
+      }
+      if (account.digits && account.digits !== 6) {
+        params.set("digits", String(account.digits));
+      }
+      if (otpType === "totp") {
+        params.set("period", String(account.period || 30));
+      }
+      if (otpType === "hotp") {
+        params.set("counter", String(account.counter || 0));
+      }
+
+      return `otpauth://${otpType}/${label}?${params.toString()}`;
+    }
+
+    function normalizeDigits(value) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric) || numeric <= 0) {
+        return 6;
+      }
+      if (numeric === 2 || numeric === 8) {
+        return 8;
+      }
+      if (numeric === 1 || numeric === 6) {
+        return 6;
+      }
+      return numeric;
+    }
+
+    function normalizeAccount(raw) {
+      const secretBytes = raw.secretBytes instanceof Uint8Array ? raw.secretBytes : new Uint8Array(raw.secretBytes);
+      const account = {
+        issuer: raw.issuer || "",
+        name: raw.name || "",
+        algorithm: raw.algorithm || "SHA1",
+        digits: normalizeDigits(raw.digits),
+        type: raw.type || "TOTP",
+        counter: Number(raw.counter || 0),
+        period: Number(raw.period || 30),
+        secretBytes,
+      };
+      account.secretBase32 = raw.secretBase32 || base32Encode(secretBytes);
+      account.otpauthUri = buildOtpauthUri(account);
+      return account;
+    }
+
+    function parseMigration(rawInput) {
+      const bytes = base64ToBytes(resolveMigrationPayloadInput(rawInput));
+      const payload = MigrationPayload.decode(bytes);
+      const accounts = (payload.otpParameters || []).map((item) =>
+        normalizeAccount({
+          secretBytes: item.secret,
+          issuer: item.issuer,
+          name: item.name,
+          algorithm: item.algorithm === 1 ? "SHA1" : "SHA1",
+          digits: item.digits,
+          type: item.type === 1 ? "HOTP" : "TOTP",
+          counter: Number(item.counter || 0),
+          period: 30,
+        }),
+      );
+      return {
+        kind: "migration",
+        accounts,
+        meta: {
+          version: payload.version || 1,
+          batchSize: payload.batchSize || 1,
+          batchIndex: payload.batchIndex || 0,
+          batchId: payload.batchId || 0,
+        },
+      };
+    }
+
+    function parseOtpauth(rawInput) {
+      const url = new URL(rawInput.trim());
+      if (url.protocol !== "otpauth:") {
+        throw new Error(t("invalidOtpauth"));
+      }
+      const type = (url.host || url.hostname || "").toUpperCase();
+      if (!["TOTP", "HOTP"].includes(type)) {
+        throw new Error(t("invalidType"));
+      }
+      const label = decodeURIComponent(url.pathname.replace(/^\//, ""));
+      const [labelIssuer, ...labelRest] = label.split(":");
+      const queryIssuer = url.searchParams.get("issuer") || "";
+      const name = labelRest.length > 0 ? labelRest.join(":") : labelIssuer;
+      const issuer = queryIssuer || (labelRest.length > 0 ? labelIssuer : "");
+      const secretBase32 = (url.searchParams.get("secret") || "").trim();
+      if (!secretBase32) {
+        throw new Error(t("parseNoSecret"));
+      }
+      const account = normalizeAccount({
+        issuer,
+        name,
+        algorithm: (url.searchParams.get("algorithm") || "SHA1").toUpperCase(),
+        digits: Number(url.searchParams.get("digits") || 6),
+        type,
+        counter: Number(url.searchParams.get("counter") || 0),
+        period: Number(url.searchParams.get("period") || 30),
+        secretBase32,
+        secretBytes: base32Decode(secretBase32),
+      });
+      return {
+        kind: "otpauth",
+        accounts: [account],
+        meta: null,
+      };
+    }
+
+    function parseInput(rawInput) {
+      const input = rawInput.trim();
+      if (!input) {
+        throw new Error(t("parseEmpty"));
+      }
+
+      const mode = dom.inputMode.value;
+      if (mode === "migration") {
+        return parseMigration(input);
+      }
+      if (mode === "otpauth") {
+        return parseOtpauth(input);
+      }
+
+      if (input.startsWith("otpauth://")) {
+        return parseOtpauth(input);
+      }
+      if (input.startsWith("otpauth-migration://") || input.startsWith("data=") || /^[A-Za-z0-9+/_=-]+$/.test(input)) {
+        return parseMigration(input);
+      }
+
+      throw new Error(t("parseUnsupported"));
+    }
+
+    function formatOtp(code) {
+      if (!code) return "------";
+      return code.length === 6 ? `${code.slice(0, 3)} ${code.slice(3)}` : `${code.slice(0, 4)} ${code.slice(4)}`;
+    }
+
+    function getDisplayName(account) {
+      return account.name || account.issuer || t("unnamedAccount");
+    }
+
+    async function generateHotp(secretBytes, counter, digits, algorithm) {
+      const mapping = { SHA1: "SHA-1", SHA256: "SHA-256", SHA512: "SHA-512" };
+      const hashName = mapping[algorithm] || "SHA-1";
+      const key = await crypto.subtle.importKey("raw", secretBytes, { name: "HMAC", hash: hashName }, false, ["sign"]);
+      const buffer = new ArrayBuffer(8);
+      const view = new DataView(buffer);
+      view.setUint32(0, Math.floor(counter / 2 ** 32));
+      view.setUint32(4, counter >>> 0);
+      const signature = new Uint8Array(await crypto.subtle.sign("HMAC", key, buffer));
+      const offset = signature[signature.length - 1] & 0x0f;
+      const binary =
+        ((signature[offset] & 0x7f) << 24) |
+        ((signature[offset + 1] & 0xff) << 16) |
+        ((signature[offset + 2] & 0xff) << 8) |
+        (signature[offset + 3] & 0xff);
+      return String(binary % (10 ** digits)).padStart(digits, "0");
+    }
+
+    async function generateTotp(account) {
+      const period = account.period || 30;
+      const counter = Math.floor(Date.now() / 1000 / period);
+      return generateHotp(account.secretBytes, counter, account.digits, account.algorithm);
+    }
+
+    function renderMetrics() {
+      const accountCount = state.accounts.length;
+      const totpCount = state.accounts.filter((item) => item.type === "TOTP").length;
+      const hotpCount = state.accounts.filter((item) => item.type === "HOTP").length;
+      const issuerCount = new Set(state.accounts.map((item) => item.issuer || t("notProvided"))).size;
+      dom.metrics.innerHTML = `
+        <div class="metric">
+          <strong>${escapeHtml(t("metricAccounts"))}</strong>
+          <span>${accountCount}</span>
+        </div>
+        <div class="metric">
+          <strong>${escapeHtml(t("metricTotp"))}</strong>
+          <span>${totpCount}</span>
+        </div>
+        <div class="metric">
+          <strong>${escapeHtml(t("metricHotp"))}</strong>
+          <span>${hotpCount}</span>
+        </div>
+        <div class="metric">
+          <strong>${escapeHtml(t("metricIssuers"))}</strong>
+          <span>${issuerCount}</span>
+        </div>
+      `;
+      dom.metrics.classList.remove("hidden");
+    }
+
+    function renderCards() {
+      dom.cards.innerHTML = state.accounts.map((account, index) => {
+        const isTotp = account.type === "TOTP";
+        return `
+          <article class="otp-card" data-index="${index}">
+            <div class="card-left">
+              <div class="card-identity">
+                <div class="pill-row">
+                  <span class="pill type">${escapeHtml(account.type)}</span>
+                  <span class="pill code">${escapeHtml(account.algorithm)} / ${account.digits}</span>
+                </div>
+                <div class="card-name" title="${escapeHtml(account.issuer || t("unnamedIssuer"))}">${escapeHtml(account.issuer || t("unnamedIssuer"))}</div>
+                <div class="card-account" title="${escapeHtml(account.name || t("unnamedAccount"))}">${escapeHtml(account.name || t("unnamedAccount"))}</div>
+              </div>
+              <div class="card-kv">
+                <div class="kv-item">
+                  <strong>${escapeHtml(t("typeSecret"))}</strong>
+                  <div class="truncate-copy">
+                    <span class="truncate-text mono" title="${escapeHtml(account.secretBase32)}">${escapeHtml(account.secretBase32)}</span>
+                    <button class="copy-mini" type="button" data-copy-value="${escapeHtml(account.secretBase32)}">${escapeHtml(t("copy"))}</button>
+                  </div>
+                </div>
+                <div class="kv-item">
+                  <strong>${escapeHtml(t("typeUri"))}</strong>
+                  <div class="truncate-copy">
+                    <span class="truncate-text mono" title="${escapeHtml(account.otpauthUri)}">${escapeHtml(account.otpauthUri)}</span>
+                    <button class="copy-mini" type="button" data-copy-value="${escapeHtml(account.otpauthUri)}">${escapeHtml(t("copy"))}</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card-right">
+              <div class="otp-header">
+                <div class="otp-code" id="otp-${index}">------</div>
+                ${isTotp ? `
+                <div class="otp-timer">
+                  <svg class="ring-svg" viewBox="0 0 44 44">
+                    <circle class="ring-track" cx="22" cy="22" r="18"/>
+                    <circle class="ring-fill" id="ring-${index}" cx="22" cy="22" r="18"/>
+                  </svg>
+                  <span class="ring-num" id="ring-num-${index}">…</span>
+                </div>
+                ` : `<span class="ring-num-static" id="ring-num-${index}">#${account.counter}</span>`}
+              </div>
+              <div class="qr-main" id="qr-${index}" data-index="${index}" role="button" tabindex="0" title="${escapeHtml(t("importQr"))}"></div>
+              ${isTotp ? "" : `
+              <button class="button primary" style="width:100%" type="button" data-action="generate-hotp" data-index="${index}">${escapeHtml(t("nextHotp"))}</button>`}
+            </div>
+          </article>
+        `;
+      }).join("");
+
+      dom.cards.classList.remove("hidden");
+      dom.emptyState.classList.add("hidden");
+      renderCardQRCodes();
+    }
+
+    function renderCardQRCodes() {
+      if (typeof QrCreator === "undefined") return;
+      state.accounts.forEach((account, index) => {
+        const container = document.getElementById(`qr-${index}`);
+        if (!container) return;
+        container.innerHTML = "";
+        QrCreator.render({
+          text: account.otpauthUri,
+          radius: 0.18,
+          ecLevel: "M",
+          fill: "#172033",
+          background: "#ffffff",
+          size: 220
+        }, container);
+      });
+    }
+
+    async function refreshLiveCodes() {
+      const CIRCUMFERENCE = 2 * Math.PI * 18; // r=18 → 113.097
+      await Promise.all(state.accounts.map(async (account, index) => {
+        const otpNode = document.getElementById(`otp-${index}`);
+        const ringNode = document.getElementById(`ring-${index}`);
+        const ringNumNode = document.getElementById(`ring-num-${index}`);
+        if (!otpNode) return;
+
+        if (account.type === "HOTP") {
+          if (ringNumNode) ringNumNode.textContent = `#${account.counter}`;
+          return;
+        }
+
+        try {
+          const code = await generateTotp(account);
+          const period = account.period || 30;
+          const nowSeconds = Math.floor(Date.now() / 1000);
+          const remaining = period - (nowSeconds % period);
+          otpNode.textContent = formatOtp(code);
+          if (ringNumNode) ringNumNode.textContent = remaining;
+          if (ringNode) {
+            ringNode.style.strokeDashoffset = CIRCUMFERENCE * (1 - remaining / period);
+            ringNode.style.stroke = remaining <= 7 ? "#ef4444" : "var(--accent)";
+          }
+        } catch {
+          otpNode.textContent = "—";
+          if (ringNumNode) ringNumNode.textContent = "!";
+        }
+      }));
+    }
+
+    function stopRefreshTimer() {
+      if (state.refreshTimer) {
+        clearInterval(state.refreshTimer);
+        state.refreshTimer = null;
+      }
+    }
+
+    function startRefreshTimer() {
+      stopRefreshTimer();
+      if (!state.accounts.length) return;
+      refreshLiveCodes();
+      state.refreshTimer = setInterval(refreshLiveCodes, 1000);
+    }
+
+    async function copyToClipboard(text, message) {
+      await navigator.clipboard.writeText(text);
+      setStatus(message, "success");
+    }
+
+    async function decodeText(rawText) {
+      const parsed = parseInput(rawText);
+      state.accounts = parsed.accounts;
+      state.payloadMeta = parsed.meta;
+
+      dom.summaryBadge.textContent = parsed.kind === "migration"
+        ? t("badgeMigration", parsed.meta?.batchId)
+        : t("badgeNormal");
+      dom.summaryBadge.classList.remove("hidden");
+
+      renderMetrics();
+      renderCards();
+      startRefreshTimer();
+
+      const sourceText = parsed.kind === "migration" ? t("parseMigration") : t("parseOtpauth");
+      setStatus(t("parsedSuccess", sourceText, state.accounts.length), "success");
+    }
+
+    async function decodeCurrentInput() {
+      try {
+        await decodeText(dom.input.value);
+      } catch (error) {
+        stopRefreshTimer();
+        setStatus(error.message || t("parseUnsupported"), "error");
+      }
+    }
+
+    async function decodeImageFile(file) {
+      try {
+        const result = await QrScanner.scanImage(file, { returnDetailedScanResult: true });
+        const text = typeof result === "string" ? result : result.data;
+        dom.input.value = text;
+        await decodeText(text);
+      } catch (error) {
+        setStatus(error.message || t("imageDecodeFail"), "error");
+      }
+    }
+
+    async function startCameraScan() {
+      if (state.scanActive) {
+        await stopCameraScan();
+        return;
+      }
+
+      try {
+        state.qrScanner = new QrScanner(
+          dom.cameraView,
+          async (result) => {
+            const text = typeof result === "string" ? result : result.data;
+            dom.input.value = text;
+            await decodeText(text);
+            await stopCameraScan();
+          },
+          {
+            returnDetailedScanResult: true,
+            highlightScanRegion: true,
+            highlightCodeOutline: true,
+          },
+        );
+
+        await state.qrScanner.start();
+        const cameras = await QrScanner.listCameras(true);
+        for (const camera of cameras) {
+          if (![...dom.cameraSelect.options].some((option) => option.value === camera.id)) {
+            const option = document.createElement("option");
+            option.value = camera.id;
+            option.textContent = camera.label || camera.id;
+            dom.cameraSelect.appendChild(option);
+          }
+        }
+
+        dom.cameraView.style.display = "block";
+        state.scanActive = true;
+        dom.cameraButton.textContent = t("cameraButtonStop");
+        setStatus(t("cameraReady"), "info");
+      } catch (error) {
+        setStatus(error.message || t("cameraFail"), "error");
+      }
+    }
+
+    async function stopCameraScan() {
+      if (state.qrScanner) {
+        state.qrScanner.stop();
+        state.qrScanner.destroy();
+        state.qrScanner = null;
+      }
+      state.scanActive = false;
+      dom.cameraView.style.display = "none";
+      dom.cameraButton.textContent = t("cameraButtonStart");
+    }
+
+    function clearResults() {
+      stopRefreshTimer();
+      stopCameraScan();
+      state.accounts = [];
+      state.payloadMeta = null;
+      dom.input.value = "";
+      dom.metrics.innerHTML = "";
+      dom.metrics.classList.add("hidden");
+      dom.cards.innerHTML = "";
+      dom.cards.classList.add("hidden");
+      dom.summaryBadge.classList.add("hidden");
+      dom.summaryBadge.textContent = "";
+      dom.emptyState.classList.remove("hidden");
+      dom.fileInput.value = "";
+      setStatus(t("clearDone"), "info");
+    }
+
+    function openAbout() {
+      dom.aboutModal.classList.add("open");
+      dom.aboutModal.setAttribute("aria-hidden", "false");
+    }
+
+    function closeAbout() {
+      dom.aboutModal.classList.remove("open");
+      dom.aboutModal.setAttribute("aria-hidden", "true");
+    }
+
+    function openQrLightbox(account) {
+      dom.qrLightboxCanvas.innerHTML = "";
+      if (typeof QrCreator !== "undefined") {
+        QrCreator.render({
+          text: account.otpauthUri,
+          radius: 0.2,
+          ecLevel: "M",
+          fill: "#172033",
+          background: "#ffffff",
+          size: 220
+        }, dom.qrLightboxCanvas);
+      }
+      dom.qrLightboxLabel.textContent = account.issuer || t("unnamedIssuer");
+      dom.qrLightboxSub.textContent = account.name || t("unnamedAccount");
+      dom.qrLightbox.classList.add("open");
+      dom.qrLightbox.setAttribute("aria-hidden", "false");
+    }
+
+    function closeQrLightbox() {
+      dom.qrLightbox.classList.remove("open");
+      dom.qrLightbox.setAttribute("aria-hidden", "true");
+    }
+
+    function applyTranslations() {
+      document.documentElement.lang = state.lang === "zh" ? "zh-CN" : "en";
+      dom.brandTitle.textContent = t("brandTitle");
+      dom.brandSubtitle.textContent = t("brandSubtitle");
+      dom.heroTitle.textContent = t("heroTitle");
+      dom.inputLabel.textContent = t("inputLabel");
+      dom.input.placeholder = t("inputPlaceholder");
+      dom.decodeButton.textContent = t("decodeButton");
+      dom.pasteButton.textContent = t("pasteButton");
+      dom.clearButton.textContent = t("clearButton");
+      dom.modeTitle.textContent = t("modeTitle");
+      dom.uploadTitle.textContent = t("uploadTitle");
+      dom.cameraTitle.textContent = t("cameraTitle");
+      dom.cameraButton.textContent = state.scanActive ? t("cameraButtonStop") : t("cameraButtonStart");
+      dom.resultsTitle.textContent = t("resultsTitle");
+      dom.emptyTitle.textContent = t("emptyTitle");
+      dom.emptyDesc.textContent = t("emptyDesc");
+      dom.aboutButton.textContent = t("aboutButton");
+      dom.aboutTitle.textContent = t("aboutTitle");
+      dom.aboutLead.textContent = t("aboutLead");
+      dom.aboutClose.textContent = t("aboutClose");
+      dom.aboutItem1Title.textContent = t("aboutItem1Title");
+      dom.aboutItem1Desc.textContent = t("aboutItem1Desc");
+      dom.aboutItem2Title.textContent = t("aboutItem2Title");
+      dom.aboutItem2Desc.textContent = t("aboutItem2Desc");
+      dom.aboutItem3Title.textContent = t("aboutItem3Title");
+      dom.aboutItem3Desc.textContent = t("aboutItem3Desc");
+      dom.aboutItem4Title.textContent = t("aboutItem4Title");
+      dom.aboutItem4Desc.textContent = t("aboutItem4Desc");
+      dom.inputMode.options[0].textContent = t("modeAuto");
+      dom.inputMode.options[1].textContent = t("modeMigration");
+      dom.inputMode.options[2].textContent = t("modeOtpauth");
+      dom.langZh.classList.toggle("active", state.lang === "zh");
+      dom.langEn.classList.toggle("active", state.lang === "en");
+
+      if (!state.accounts.length) {
+        setStatus(t("statusIdle"), "info");
+      } else {
+        renderMetrics();
+        renderCards();
+        refreshLiveCodes();
+      }
+    }
+
+    dom.decodeButton.addEventListener("click", decodeCurrentInput);
+
+    dom.input.addEventListener("keydown", (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+        decodeCurrentInput();
+      }
+    });
+
+    dom.pasteButton.addEventListener("click", async () => {
+      try {
+        const text = await navigator.clipboard.readText();
+        dom.input.value = text;
+        setStatus(t("clipboardLoaded"), "info");
+      } catch (error) {
+        setStatus(error.message || t("clipboardFail"), "error");
+      }
+    });
+
+    dom.clearButton.addEventListener("click", clearResults);
+
+    dom.fileInput.addEventListener("change", async (event) => {
+      const file = event.target.files?.[0];
+      if (file) {
+        await decodeImageFile(file);
+      }
+    });
+
+    dom.cameraButton.addEventListener("click", startCameraScan);
+
+    dom.cameraSelect.addEventListener("change", async (event) => {
+      if (state.qrScanner) {
+        await state.qrScanner.setCamera(event.target.value);
+        setStatus(t("cameraSwitched"), "info");
+      }
+    });
+
+    dom.cards.addEventListener("click", async (event) => {
+      const qrMain = event.target.closest(".qr-main[data-index]");
+      if (qrMain) {
+        const account = state.accounts[Number(qrMain.dataset.index)];
+        if (account) openQrLightbox(account);
+        return;
+      }
+
+      const miniCopy = event.target.closest("button[data-copy-value]");
+      if (miniCopy) {
+        try {
+          await navigator.clipboard.writeText(miniCopy.getAttribute("data-copy-value") || "");
+          setStatus(t("copiedValue"), "success");
+        } catch (error) {
+          setStatus(error.message || t("clipboardFail"), "error");
+        }
+        return;
+      }
+
+      const actionButton = event.target.closest("button[data-action]");
+      if (!actionButton) return;
+      const index = Number(actionButton.dataset.index);
+      const account = state.accounts[index];
+      if (!account) return;
+
+      try {
+        if (actionButton.dataset.action === "copy-secret") {
+          await copyToClipboard(account.secretBase32, t("copiedSecret", getDisplayName(account)));
+        }
+        if (actionButton.dataset.action === "copy-uri") {
+          await copyToClipboard(account.otpauthUri, t("copiedUri", getDisplayName(account)));
+        }
+        if (actionButton.dataset.action === "generate-hotp") {
+          const code = await generateHotp(account.secretBytes, account.counter, account.digits, account.algorithm);
+          const otpNode = document.getElementById(`otp-${index}`);
+          const ringNumNode = document.getElementById(`ring-num-${index}`);
+          account.counter += 1;
+          if (otpNode) otpNode.textContent = formatOtp(code);
+          if (ringNumNode) ringNumNode.textContent = `#${account.counter}`;
+          setStatus(t("hotpGenerated", getDisplayName(account)), "success");
+        }
+      } catch (error) {
+        setStatus(error.message || t("clipboardFail"), "error");
+      }
+    });
+
+    dom.langZh.addEventListener("click", () => {
+      state.lang = "zh";
+      applyTranslations();
+    });
+
+    dom.langEn.addEventListener("click", () => {
+      state.lang = "en";
+      applyTranslations();
+    });
+
+    dom.aboutButton.addEventListener("click", openAbout);
+    dom.aboutClose.addEventListener("click", closeAbout);
+    dom.aboutModal.addEventListener("click", (event) => {
+      if (event.target === dom.aboutModal) closeAbout();
+    });
+
+    dom.qrLightbox.addEventListener("click", (event) => {
+      if (event.target === dom.qrLightbox) closeQrLightbox();
+    });
+
+    document.addEventListener("paste", async (event) => {
+      const items = [...(event.clipboardData?.items || [])];
+      const imageItem = items.find((item) => item.type.startsWith("image/"));
+      if (!imageItem) {
+        return;
+      }
+      const file = imageItem.getAsFile();
+      if (!file) {
+        setStatus(t("imagePasteUnsupported"), "error");
+        return;
+      }
+      setStatus(t("clipboardImageLoaded"), "info");
+      await decodeImageFile(file);
+    });
+
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        closeAbout();
+        closeQrLightbox();
+      }
+    });
+
+    window.addEventListener("beforeunload", () => {
+      stopRefreshTimer();
+      stopCameraScan();
+    });
+
+    applyTranslations();
+  </script>
+</body>
+
+</html>
