@@ -1,4 +1,4 @@
-# OTP Migration Decoder
+# Google OTP Decoder
 
 本项目是一个纯静态前端工具，用于本地解密 Google Authenticator 导出的 migration 数据，并实时显示 OTP、有效期和可重新导入的二维码。
 
